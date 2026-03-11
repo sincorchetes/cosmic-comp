@@ -37,7 +37,7 @@ impl TilingBlocker {
     }
 
     pub fn is_ready(&self) -> bool {
-        Instant::now().duration_since(self.start) >= Duration::from_millis(300)
+        Instant::now().duration_since(self.start) >= Duration::from_millis(200)
             || self
                 .necessary_acks
                 .iter()
@@ -45,7 +45,7 @@ impl TilingBlocker {
     }
 
     pub fn is_processed(&self) -> bool {
-        Instant::now().duration_since(self.start) >= Duration::from_millis(500)
+        Instant::now().duration_since(self.start) >= Duration::from_millis(350)
             || self
                 .necessary_acks
                 .iter()

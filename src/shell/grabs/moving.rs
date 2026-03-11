@@ -52,7 +52,7 @@ use super::{GrabStartData, ReleaseMode};
 
 pub type SeatMoveGrabState = Mutex<Option<MoveGrabState>>;
 
-const RESCALE_ANIMATION_DURATION: f64 = 150.0;
+const RESCALE_ANIMATION_DURATION: f64 = 100.0;
 
 pub struct MoveGrabState {
     window: CosmicMapped,
