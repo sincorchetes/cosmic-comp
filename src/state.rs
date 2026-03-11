@@ -552,7 +552,8 @@ impl LockedBackend<'_> {
                 }
                 if start.elapsed() > timeout {
                     anyhow::bail!(
-                        \"Timed out waiting for shell write lock during output configuration. \\\n                         This may indicate a stuck render thread.\"
+                        "Timed out waiting for shell write lock during output configuration. \
+                         This may indicate a stuck render thread."
                     );
                 }
                 // Brief yield to let render threads release their read locks
