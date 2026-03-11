@@ -535,7 +535,30 @@ impl LockedBackend<'_> {
             LockedBackend::X11(state) => state.apply_config_for_outputs(test_only),
         }?;
 
-        let mut shell_ref = shell.write();
+        // Acquire the shell write lock with a timeout to avoid permanent hangs.
+        // During hotplug, orphaned surface render threads may still hold a
+        // shell read lock. parking_lot's write-preferring RwLock would block
+        // indefinitely if we use shell.write() and a reader never releases.
+        // Using try_write in a loop with brief yields avoids setting the
+        // write-intent flag that blocks all new readers (which is what causes
+        // the cascading freeze). If we can't acquire within 10 seconds,
+        // something is seriously wrong and we bail.
+        let mut shell_ref = {
+            let start = std::time::Instant::now();
+            let timeout = std::time::Duration::from_secs(10);
+            loop {
+                if let Some(guard) = shell.try_write() {
+                    break guard;
+                }
+                if start.elapsed() > timeout {
+                    anyhow::bail!(
+                        \"Timed out waiting for shell write lock during output configuration. \\\n                         This may indicate a stuck render thread.\"
+                    );
+                }
+                // Brief yield to let render threads release their read locks
+                std::thread::yield_now();
+            }
+        };
         for output in &all_outputs {
             // apply the rest; add / remove outputs
             let final_config = output

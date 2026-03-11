@@ -414,6 +414,11 @@ impl State {
                 let changes = device.enumerate_surfaces()?;
 
                 let mut w = self.common.shell.read().global_space().size.w as u32;
+                // Collect surfaces to remove so we can properly join their threads.
+                // Using drop_and_join() instead of implicit Drop ensures the render
+                // thread has exited before we proceed to reconfigure outputs, preventing
+                // orphaned threads from holding the shell RwLock during hotplug.
+                let mut surfaces_to_join = Vec::new();
                 for conn in changes.removed {
                     // contains conns with updated crtcs, just drop the surface and re-create
                     if let Some(pos) = device
@@ -433,18 +438,29 @@ impl State {
                         .find_map(|(crtc, surface)| (surface.connector == conn).then_some(crtc))
                         .cloned()
                     {
-                        device.inner.surfaces.remove(&crtc).unwrap();
+                        if let Some(surface) = device.inner.surfaces.remove(&crtc) {
+                            surfaces_to_join.push(surface);
+                        }
                     }
 
                     if !changes.added.iter().any(|(c, _)| c == &conn) {
-                        outputs_removed.push(
-                            device
-                                .inner
-                                .outputs
-                                .remove(&conn)
-                                .expect("Connector without output?"),
-                        );
+                        match device.inner.outputs.remove(&conn) {
+                            Some(output) => outputs_removed.push(output),
+                            None => {
+                                warn!(
+                                    ?conn,
+                                    "Connector scheduled for removal has no associated output, skipping"
+                                );
+                            }
+                        }
                     }
+                }
+
+                // Join removed surface threads BEFORE adding new ones or reconfiguring.
+                // This is safe here because device_changed() does NOT hold the DRM device lock,
+                // so the threads can complete their current render cycle and exit cleanly.
+                for surface in surfaces_to_join {
+                    surface.drop_and_join();
                 }
 
                 for (conn, maybe_crtc) in changes.added {
@@ -486,7 +502,25 @@ impl State {
             self.common.remove_output(&output);
         }
 
-        self.backend.kms().refresh_used_devices()?;
+        // refresh_used_devices updates EGL contexts and render nodes.
+        // On hotplug this can transiently fail (e.g. GPU node temporarily
+        // unavailable). Retry once after a brief delay before giving up.
+        if let Err(err) = self.backend.kms().refresh_used_devices() {
+            warn!(
+                ?err,
+                "refresh_used_devices failed after hotplug, retrying in 100ms..."
+            );
+            std::thread::sleep(Duration::from_millis(100));
+            if let Err(err) = self.backend.kms().refresh_used_devices() {
+                error!(
+                    ?err,
+                    "refresh_used_devices failed on retry. \
+                     New outputs may not render correctly."
+                );
+                // Don't propagate the error — the compositor should continue
+                // running with existing outputs rather than crashing.
+            }
+        }
         Ok(outputs_added)
     }
 

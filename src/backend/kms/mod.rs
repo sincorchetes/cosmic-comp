@@ -297,6 +297,13 @@ fn init_udev(
 
     let dispatcher = Dispatcher::new(udev_backend, move |event, _, state: &mut State| {
         let dh = state.common.display_handle.clone();
+        let event_desc = match &event {
+            UdevEvent::Added { device_id, .. } => format!("Added({})", device_id),
+            UdevEvent::Changed { device_id } => format!("Changed({})", device_id),
+            UdevEvent::Removed { device_id } => format!("Removed({})", device_id),
+        };
+        info!("Handling udev event: {}", event_desc);
+
         match match event {
             UdevEvent::Added {
                 device_id,
@@ -313,7 +320,11 @@ fn init_udev(
                 .map(|_| Vec::new()),
         } {
             Ok(added) => {
-                debug!("Successfully handled udev event.");
+                info!(
+                    "Successfully handled udev event: {} ({} outputs added)",
+                    event_desc,
+                    added.len()
+                );
 
                 {
                     let backend = state.backend.kms();
@@ -327,19 +338,29 @@ fn init_udev(
                 }
 
                 if let Err(err) = state.refresh_output_config() {
-                    warn!("Unable to load output config: {}", err);
+                    warn!(?err, "Unable to load output config after hotplug");
                     if !added.is_empty() {
-                        for output in added {
+                        warn!(
+                            "Disabling {} newly added output(s) and retrying config...",
+                            added.len()
+                        );
+                        for output in &added {
                             output.config_mut().enabled = OutputState::Disabled;
                         }
                         if let Err(err) = state.refresh_output_config() {
-                            error!("Unrecoverable config error: {}", err);
+                            error!(?err, "Unrecoverable config error after hotplug. \
+                                    Session may need to be restarted.");
                         }
                     }
                 }
             }
             Err(err) => {
-                error!(?err, "Error while handling udev event.")
+                error!(
+                    ?err,
+                    "Error while handling udev event: {}. \
+                     The compositor will continue but the display configuration may be incomplete.",
+                    event_desc
+                );
             }
         }
     });
@@ -803,10 +824,29 @@ impl KmsGuard<'_> {
             // first drop old surfaces
             if !test_only {
                 for output in outputs.iter().filter(|o| !o.is_enabled()) {
-                    device
+                    // Collect CRTCs to remove so we can signal threads before dropping.
+                    // We set active=false on each surface to prevent the render thread
+                    // from starting new renders while we're reconfiguring outputs.
+                    // This avoids a deadlock where:
+                    //   1. The main thread needs shell.write() later in this function
+                    //   2. An orphaned render thread holds shell.read() in its render loop
+                    //   3. parking_lot's write-preferring RwLock blocks all new reads
+                    //   4. All surface threads stall → session freeze
+                    let crtcs_to_remove: Vec<_> = device
                         .inner
                         .surfaces
-                        .retain(|_, surface| surface.output != *output);
+                        .iter()
+                        .filter(|(_, surface)| surface.output == *output)
+                        .map(|(crtc, _)| *crtc)
+                        .collect();
+                    for crtc in crtcs_to_remove {
+                        if let Some(surface) = device.inner.surfaces.remove(&crtc) {
+                            // Surface::Drop will set active=false, send End, and
+                            // NOT join (safe under DRM lock). The thread will exit
+                            // on its own after processing the End command.
+                            drop(surface);
+                        }
+                    }
                 }
             }
 

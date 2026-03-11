@@ -367,7 +367,21 @@ impl Surface {
             egl,
             sync: tx,
         });
-        let _ = rx.recv();
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!(
+                    "Timeout waiting for surface thread to process NodeAdded for {}",
+                    self.output.name()
+                );
+            }
+            Err(_) => {
+                warn!(
+                    "Surface thread for {} died while adding node",
+                    self.output.name()
+                );
+            }
+        }
     }
 
     pub fn remove_node(&mut self, node: DrmNode) {
@@ -379,7 +393,23 @@ impl Surface {
             .send(ThreadCommand::NodeRemoved { node, sync: tx });
         // Block so we can be sure the file descriptor is closed
         // (which is relevant for the udev device_removed callback).
-        let _ = rx.recv();
+        // Use a timeout to avoid blocking the main event loop indefinitely
+        // if the surface thread is stuck (e.g. during hotplug).
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!(
+                    "Timeout waiting for surface thread to process NodeRemoved for {}",
+                    self.output.name()
+                );
+            }
+            Err(_) => {
+                warn!(
+                    "Surface thread for {} died while removing node",
+                    self.output.name()
+                );
+            }
+        }
     }
 
     pub fn on_vblank(&self, metadata: Option<DrmEventMetadata>) {
@@ -427,7 +457,24 @@ impl Surface {
     pub fn suspend(&mut self) {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let _ = self.thread_command.send(ThreadCommand::Suspend(tx));
-        let _ = rx.recv();
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!(
+                    "Timeout waiting for surface thread to suspend for {}",
+                    self.output.name()
+                );
+                // Force-set active to false to prevent further renders
+                self.active.store(false, Ordering::SeqCst);
+            }
+            Err(_) => {
+                warn!(
+                    "Surface thread for {} died during suspend",
+                    self.output.name()
+                );
+                self.active.store(false, Ordering::SeqCst);
+            }
+        }
     }
 
     pub fn resume(
@@ -461,29 +508,78 @@ impl Surface {
         }
     }
 
+    /// Explicitly drop the surface and join its render thread.
+    ///
+    /// This should be used instead of implicit `Drop` when the caller
+    /// does NOT hold the DRM device lock, so joining the thread is safe
+    /// (e.g. in `device_changed` or `device_removed`).
     pub fn drop_and_join(mut self) {
+        // Signal the thread to stop rendering immediately
+        self.active.store(false, Ordering::SeqCst);
         let thread = self.thread.take();
+        // This triggers Drop, which sends ThreadCommand::End
         let _ = self;
         if let Some(thread) = thread {
-            let name = thread.thread().name().unwrap().to_string();
-            let _ = thread.join();
-            info!("Thread {} terminated.", name)
+            let name = thread.thread().name().unwrap_or("unknown").to_string();
+            // Use a parking thread to implement join-with-timeout.
+            // We give the thread a generous timeout to finish its current render cycle.
+            let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+            let join_handle = std::thread::Builder::new()
+                .name(format!("join-{}", name))
+                .spawn(move || {
+                    let result = thread.join();
+                    let _ = done_tx.send(result);
+                })
+                .ok();
+
+            match done_rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(Ok(())) => {
+                    info!("Thread {} terminated.", name);
+                }
+                Ok(Err(_)) => {
+                    error!("Thread {} panicked during shutdown.", name);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    warn!(
+                        "Thread {} did not terminate within 5s. \
+                         Detaching to avoid blocking the compositor.",
+                        name
+                    );
+                    // Detach the join-helper thread; the surface thread
+                    // will eventually exit on its own.
+                    if let Some(handle) = join_handle {
+                        let _ = handle;
+                    }
+                }
+                Err(_) => {
+                    warn!("Join helper for thread {} died unexpectedly.", name);
+                }
+            }
         }
     }
 }
 
 impl Drop for Surface {
     fn drop(&mut self) {
+        // Signal thread to stop scheduling new renders
+        self.active.store(false, Ordering::SeqCst);
         let _ = self.thread_command.send(ThreadCommand::End);
         self.loop_handle.remove(self.thread_token);
         if let Some(thread) = self.thread.take() {
+            // We cannot join here because Drop may be called while the
+            // DRM device lock is held (e.g. inside `apply_config_for_outputs`),
+            // which would deadlock if the surface thread is waiting on that lock.
+            // The thread will exit on its own after processing the End command.
+            let name = thread
+                .thread()
+                .name()
+                .unwrap_or("unknown")
+                .to_string();
+            info!(
+                "Surface thread {} signaled to shut down (not joining from Drop).",
+                name
+            );
             let _ = thread;
-            // We want to do this, but this currently deadlocks on `apply_config_for_outputs`.
-            /*
-                let name = thread.thread().name().unwrap().to_string();
-                let _ = thread.join();
-                info!("Thread {} terminated.", name)
-            */
         }
     }
 }
