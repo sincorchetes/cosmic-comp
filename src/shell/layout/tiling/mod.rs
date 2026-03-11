@@ -77,10 +77,10 @@ mod grabs;
 pub use self::blocker::*;
 pub use self::grabs::*;
 
-pub const ANIMATION_DURATION: Duration = Duration::from_millis(200);
-pub const MINIMIZE_ANIMATION_DURATION: Duration = Duration::from_millis(320);
-pub const MOUSE_ANIMATION_DELAY: Duration = Duration::from_millis(150);
-pub const INITIAL_MOUSE_ANIMATION_DELAY: Duration = Duration::from_millis(500);
+pub const ANIMATION_DURATION: Duration = Duration::from_millis(150);
+pub const MINIMIZE_ANIMATION_DURATION: Duration = Duration::from_millis(200);
+pub const MOUSE_ANIMATION_DELAY: Duration = Duration::from_millis(100);
+pub const INITIAL_MOUSE_ANIMATION_DELAY: Duration = Duration::from_millis(350);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeDesc {

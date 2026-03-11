@@ -111,7 +111,7 @@ use self::{
     },
 };
 
-const ANIMATION_DURATION: Duration = Duration::from_millis(200);
+const ANIMATION_DURATION: Duration = Duration::from_millis(150);
 const GESTURE_MAX_LENGTH: f64 = 150.0;
 const GESTURE_POSITION_THRESHOLD: f64 = 0.5;
 const GESTURE_VELOCITY_THRESHOLD: f64 = 0.02;

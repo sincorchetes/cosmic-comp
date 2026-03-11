@@ -72,7 +72,7 @@ use super::{
     layout::tiling::{Data, NodeDesc},
 };
 
-const FULLSCREEN_ANIMATION_DURATION: Duration = Duration::from_millis(200);
+const FULLSCREEN_ANIMATION_DURATION: Duration = Duration::from_millis(150);
 
 // For stable workspace id, generate random 24-bit integer, as a hex string
 // Must be compared with existing workspaces work uniqueness.
