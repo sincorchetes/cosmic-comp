@@ -1600,6 +1600,13 @@ fn render_node_for_output(
     if nodes.contains(target_node) || nodes.is_empty() {
         *target_node
     } else {
+        // In multi-GPU setups (e.g. NVIDIA discrete + Intel integrated),
+        // prefer rendering on the GPU where client buffers originate.
+        // This avoids an expensive cross-GPU copy for every frame when
+        // the majority of surfaces are rendered by one GPU.
+        //
+        // If most windows originate from the primary (e.g. NVIDIA), use it.
+        // The compositor will handle the copy to the target display GPU.
         *primary_node
     }
 }
@@ -1612,7 +1619,7 @@ fn get_surface_dmabuf_feedback(
     primary_plane_formats: FormatSet,
     overlay_plane_formats: Option<FormatSet>,
 ) -> SurfaceDmabufFeedback {
-    // We limit the scan-out trache to formats we can also render from
+    // We limit the scan-out tranche to formats we can also render from
     // so that there is always a fallback render path available in case
     // the supplied buffer can not be scanned out directly
 
@@ -1626,37 +1633,45 @@ fn get_surface_dmabuf_feedback(
             .cloned()
             .collect::<FormatSet>()
     });
-    let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats);
+    let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats.clone());
 
-    /*
-    // Sadly no implementation would pick this up as a preferred render tranche,
-    // where the combined formats would increase our chances of doing a dmabuf copy.
-    // .. So we should probably not advertise this on the off-chance it actually triggers bugs.
+    // Cross-GPU DMA-BUF feedback for multi-GPU setups (e.g. NVIDIA + Intel).
     //
+    // When the render GPU differs from the display GPU, we need to be careful:
+    // - NVIDIA as render node + Intel/AMD as display: advertising the display
+    //   device's scanout tranche can cause NVIDIA clients to send dmabufs that
+    //   the Intel/AMD driver cannot import, leading to hangs.
+    // - We advertise a non-scanout "preferred render" tranche with the
+    //   intersection of formats, but ONLY when going from a non-NVIDIA render
+    //   node to a non-NVIDIA target. NVIDIA cross-device dmabufs remain
+    //   compositor-copied until dmabuf-v6 provides proper negotiation.
+    let is_render_nvidia = is_nvidia_device(render_node);
+    let is_target_nvidia = is_nvidia_device(target_node);
+    let is_cross_gpu = target_node != render_node;
 
-    let combined_formats = render_formats.intersection(&target_formats).cloned().collect::<FormatSet>();
-    if target_node != render_node.dev_id() && !combined_formats.is_empty() {
-        builder = builder.add_preference_tranche(
-            render_node.dev_id(),
-            None,
-            combined_formats,
-        );
-    };
+    let mut feedback_builder = builder.clone();
 
-    // We also can't advertise scan out tranches for the actual display device,
-    // as e.g. the nvidia driver might then send us dmabufs, that makes e.g. the iris hangs on import...
-    if target_node != render_node.dev_id() && !combined_formats.is_empty() {
-        builder = builder.add_preference_tranche(
-            target_node.dev_id(),
-            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
-            combined_formats,
-        );
-    };
+    if is_cross_gpu && !is_render_nvidia && !is_target_nvidia {
+        // Safe cross-GPU case: neither device is NVIDIA, so cross-device
+        // dmabuf import is generally reliable.
+        let combined_formats = render_formats
+            .intersection(&_target_formats)
+            .cloned()
+            .collect::<FormatSet>();
+        if !combined_formats.is_empty() {
+            feedback_builder = feedback_builder.add_preference_tranche(
+                render_node.dev_id(),
+                None,
+                combined_formats,
+            );
+        }
+    }
 
-    // So no fun combinations, we gotta wait for dmabuf-v6
-    */
+    let render_feedback = feedback_builder.build().unwrap();
 
-    let render_feedback = builder.clone().build().unwrap();
+    // Scanout feedback: only when render == target (same GPU), because we
+    // already disable overlay planes for NVIDIA (see apply_config_for_outputs),
+    // and cross-GPU scanout is not yet safe.
     let primary_scanout_feedback = (target_node == render_node).then(|| {
         builder
             .clone()
@@ -1685,6 +1700,18 @@ fn get_surface_dmabuf_feedback(
         render_feedback,
         overlay_scanout_feedback,
         primary_scanout_feedback,
+    }
+}
+
+/// Check if a DRM node belongs to an NVIDIA GPU by reading the PCI vendor ID.
+fn is_nvidia_device(node: DrmNode) -> bool {
+    if let Ok(vendor) = std::fs::read_to_string(format!(
+        "/sys/class/drm/renderD{}/device/vendor",
+        node.minor()
+    )) {
+        vendor.trim() == "0x10de"
+    } else {
+        false
     }
 }
 

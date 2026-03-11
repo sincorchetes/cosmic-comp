@@ -230,6 +230,21 @@ fn determine_primary_gpu(
     drm_devices: &IndexMap<DrmNode, Device>,
     seat: String,
 ) -> Result<Option<DrmNode>> {
+    // Log all available GPUs for debugging multi-GPU setups
+    for dev in drm_devices.values() {
+        let driver_name = dev
+            .drm
+            .device()
+            .get_driver()
+            .ok()
+            .map(|d| d.name().to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        info!(
+            "Available GPU: {} (render: {}, driver: {})",
+            dev.inner.dev_node, dev.inner.render_node, driver_name
+        );
+    }
+
     if let Some(device) = dev_var("COSMIC_RENDER_DEVICE") {
         if let Some(node) = drm_devices.values().find_map(|dev| {
             device
@@ -918,15 +933,31 @@ impl KmsGuard<'_> {
 
                         let driver = drm.device().get_driver().ok();
 
-                        // QUIRK: Using an overlay plane on a nvidia card breaks the display controller (wtf...)
-                        if driver.as_ref().is_some_and(|driver| {
+                        let is_nvidia = driver.as_ref().is_some_and(|driver| {
                             driver
                                 .name()
                                 .to_string_lossy()
                                 .to_lowercase()
                                 .contains("nvidia")
-                        }) {
+                        });
+
+                        // QUIRK: Using an overlay plane on a nvidia card breaks the
+                        // display controller. The NVIDIA proprietary DRM driver has
+                        // known issues with overlay plane scanout that can cause
+                        // display corruption or hangs.
+                        if is_nvidia {
+                            info!(
+                                "NVIDIA driver detected for output {}, disabling overlay planes and cursor planes",
+                                surface.output.name()
+                            );
                             planes.overlay = vec![];
+                            // QUIRK: NVIDIA cursor planes have limited format support
+                            // and size constraints that differ from what the DRM API
+                            // reports. This can cause cursor rendering artifacts or
+                            // failures on certain NVIDIA driver versions. Disable
+                            // hardware cursor to use software cursor fallback,
+                            // which is more reliable across NVIDIA driver versions.
+                            planes.cursor = vec![];
                         }
                         // QUIRK: Cursor planes on evdi sometimes don't disappear correctly.
                         // TODO: Debug and figure out, as they can be a nice improvement.
