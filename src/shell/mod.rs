@@ -2147,28 +2147,72 @@ impl Shell {
     }
 
     pub fn animations_going(&self) -> bool {
-        self.workspaces.sets.values().any(|set| {
-            set.previously_active
-                .as_ref()
-                .is_some_and(|(_, delta)| delta.is_animating())
-                || set.sticky_layer.animations_going()
-        }) || !matches!(
+        self.animations_going_global()
+            || self
+                .workspaces
+                .sets
+                .values()
+                .any(|set| Self::set_animations_going(set))
+            || self
+                .workspaces
+                .spaces()
+                .any(|workspace| workspace.animations_going())
+    }
+
+    /// Check if animations are going that affect a specific output,
+    /// avoiding unnecessary re-renders on unrelated outputs.
+    pub fn animations_going_for_output(&self, output: &Output) -> bool {
+        // Global animations affect all outputs
+        if self.animations_going_global() {
+            return true;
+        }
+
+        // Per-output zoom
+        if self.zoom_state.is_some() {
+            if output
+                .user_data()
+                .get::<Mutex<OutputZoomState>>()
+                .is_some_and(|state| state.lock().unwrap().is_animating())
+            {
+                return true;
+            }
+        }
+
+        // Per-output workspace set animations
+        if let Some(set) = self.workspaces.sets.get(output) {
+            if Self::set_animations_going(set) {
+                return true;
+            }
+            // Per-output workspace layer animations
+            if set
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.animations_going())
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns true if global (non-per-output) animations are active
+    fn animations_going_global(&self) -> bool {
+        !matches!(
             self.overview_mode,
             OverviewMode::None | OverviewMode::Active(_)
         ) || !matches!(
             self.resize_mode,
             ResizeMode::None | ResizeMode::Active(_, _)
-        ) || self
-            .workspaces
-            .spaces()
-            .any(|workspace| workspace.animations_going())
-            || self.zoom_state.as_ref().is_some_and(|_| {
-                self.outputs().any(|o| {
-                    o.user_data()
-                        .get::<Mutex<OutputZoomState>>()
-                        .is_some_and(|state| state.lock().unwrap().is_animating())
-                })
-            })
+        )
+    }
+
+    /// Returns true if a workspace set has active transition or sticky layer animations
+    fn set_animations_going(set: &WorkspaceSet) -> bool {
+        set.previously_active
+            .as_ref()
+            .is_some_and(|(_, delta)| delta.is_animating())
+            || set.sticky_layer.animations_going()
     }
 
     pub fn update_animations(&mut self) -> HashMap<ClientId, Client> {

@@ -751,7 +751,10 @@ impl State {
         );
         let workspace_state = WorkspaceState::new(dh, client_not_sandboxed);
 
-        let async_executor = ThreadPool::builder().pool_size(1).create().unwrap();
+        let pool_size = std::thread::available_parallelism()
+            .map(|n| n.get().min(4).max(1))
+            .unwrap_or(1);
+        let async_executor = ThreadPool::builder().pool_size(pool_size).create().unwrap();
 
         if let Err(err) = crate::dbus::init(&handle, &async_executor) {
             tracing::warn!(?err, "Failed to initialize dbus handlers");

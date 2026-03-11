@@ -136,12 +136,24 @@ opt-level = 2
 [profile.dev.package.ttf-parser]
 opt-level = 2
 
+[profile.dev.package.iced_tiny_skia]
+opt-level = 2
+
+[profile.dev.package.cosmic-text]
+opt-level = 2
+
+[profile.dev.package.smithay]
+opt-level = 2
+
 [profile.fastdebug]
 debug = true
 inherits = "release"
 
 [profile.release]
 lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
 
 [patch."https://github.com/pop-os/cosmic-protocols"]
 cosmic-protocols = { git = "https://github.com/pop-os//cosmic-protocols", branch = "main" }

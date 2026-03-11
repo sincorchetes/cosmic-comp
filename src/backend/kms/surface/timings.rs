@@ -96,7 +96,7 @@ impl Timings {
             vendor,
 
             pending_frame: None,
-            previous_frames: VecDeque::new(),
+            previous_frames: VecDeque::with_capacity(Self::CLEANUP),
         }
     }
 
@@ -177,7 +177,7 @@ impl Timings {
             self.previous_frames.push_back(new_frame);
 
             if let Some(overflow) = self.previous_frames.len().checked_sub(Self::CLEANUP * 2) {
-                self.previous_frames = self.previous_frames.split_off(overflow + Self::CLEANUP);
+                drop(self.previous_frames.drain(..overflow + Self::CLEANUP));
             }
         }
     }

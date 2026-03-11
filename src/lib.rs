@@ -189,10 +189,14 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
 
         {
             let shell = state.common.shell.read();
-            if shell.animations_going() {
-                for output in shell.outputs().cloned().collect::<Vec<_>>().into_iter() {
-                    state.backend.schedule_render(&output);
-                }
+            let outputs_to_render: Vec<_> = shell
+                .outputs()
+                .filter(|output| shell.animations_going_for_output(output))
+                .cloned()
+                .collect();
+            drop(shell);
+            for output in outputs_to_render {
+                state.backend.schedule_render(&output);
             }
         }
 
