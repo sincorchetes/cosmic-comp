@@ -1654,11 +1654,12 @@ fn get_surface_dmabuf_feedback(
     if is_cross_gpu && !is_render_nvidia && !is_target_nvidia {
         // Safe cross-GPU case: neither device is NVIDIA, so cross-device
         // dmabuf import is generally reliable.
-        let combined_formats = render_formats
+        let combined_vec: Vec<_> = render_formats
             .intersection(&_target_formats)
             .cloned()
-            .collect::<FormatSet>();
-        if !combined_formats.is_empty() {
+            .collect();
+        if !combined_vec.is_empty() {
+            let combined_formats: FormatSet = combined_vec.into_iter().collect();
             feedback_builder = feedback_builder.add_preference_tranche(
                 render_node.dev_id(),
                 None,

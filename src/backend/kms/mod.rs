@@ -41,7 +41,7 @@ use smithay::{
     },
 };
 use surface::GbmDrmOutput;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use std::{
     collections::{HashMap, HashSet},
