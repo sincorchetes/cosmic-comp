@@ -19,6 +19,13 @@ pub struct Timings {
     pub previous_frames: VecDeque<Frame>,
 }
 
+/// Whether a GPU vendor is NVIDIA (PCI vendor ID 0x10de).
+/// The NVIDIA proprietary DRM driver has several behavioral differences
+/// that require specific workarounds in the compositor.
+pub fn is_nvidia_vendor(vendor: Option<u32>) -> bool {
+    vendor == Some(0x10de)
+}
+
 #[derive(Debug)]
 pub struct PendingFrame {
     render_start: Time<Monotonic>,
@@ -352,13 +359,19 @@ impl Timings {
 
         let next_presentation_time =
             last_presentation_time + Duration::from_nanos(min_refresh_interval_ns);
-        let deadline = next_presentation_time.saturating_sub(
-            if let Some(avg_submittime) = self.avg_submittime(SAMPLE_TIME_WINDOW) {
-                avg_submittime
-            } else {
-                baseline
-            } + BASE_SAFETY_MARGIN,
-        );
+
+        // On NVIDIA, avg_submittime is unreliable because the driver
+        // returns page_flip/commit early. Use the conservative baseline
+        // instead of possibly-wrong submit time measurements.
+        let margin = if is_nvidia_vendor(self.vendor) {
+            baseline
+        } else if let Some(avg_submittime) = self.avg_submittime(SAMPLE_TIME_WINDOW) {
+            avg_submittime
+        } else {
+            baseline
+        };
+
+        let deadline = next_presentation_time.saturating_sub(margin + BASE_SAFETY_MARGIN);
 
         now >= deadline
     }
@@ -376,9 +389,20 @@ impl Timings {
             return Duration::ZERO;
         }
 
-        // HACK: Nvidia returns `page_flip`/`commit` early, so we have no information to optimize latency on submission.
-        if self.vendor == Some(0x10de) {
-            return Duration::ZERO;
+        // NVIDIA workaround: The proprietary driver returns `page_flip`/`commit`
+        // early (before the actual flip completes), making submit_time measurements
+        // unreliable. Instead of completely disabling frame pacing (which wastes
+        // power and causes busy-looping), we use a conservative presentation-based
+        // approach: render at 75% of the refresh interval before the next estimated
+        // presentation. This gives the NVIDIA driver enough headroom while still
+        // providing some frame pacing benefit over immediate rendering.
+        if is_nvidia_vendor(self.vendor) {
+            // Use presentation timestamps (which ARE reliable on NVIDIA) to
+            // schedule rendering conservatively before the next vblank.
+            let nvidia_margin = Duration::from_nanos(
+                refresh_interval.get() * 3 / 4  // 75% of refresh interval
+            ).max(baseline + BASE_SAFETY_MARGIN);
+            return estimated_presentation_time.saturating_sub(nvidia_margin);
         }
 
         let Some(avg_submittime) = self.avg_submittime(SAMPLE_TIME_WINDOW) else {
@@ -387,5 +411,10 @@ impl Timings {
 
         let margin = avg_submittime + BASE_SAFETY_MARGIN;
         estimated_presentation_time.saturating_sub(margin)
+    }
+
+    /// Returns true if this Timings instance is tracking an NVIDIA GPU.
+    pub fn is_nvidia(&self) -> bool {
+        is_nvidia_vendor(self.vendor)
     }
 }
