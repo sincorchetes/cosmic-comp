@@ -197,16 +197,34 @@ where
         scale: Scale<f64>,
         commit: Option<CommitCounter>,
     ) -> DamageSet<i32, Physical> {
-        // FIXME: radius changes need to cause damage.
         let damage = self.inner.damage_since(scale, commit);
 
         // Intersect with geometry, since we're clipping by it.
         let mut geo = self.geometry.to_physical_precise_round(scale);
         geo.loc -= self.geometry(scale).loc;
-        damage
+
+        let mut result: DamageSet<i32, Physical> = damage
             .into_iter()
             .filter_map(|rect| rect.intersection(geo))
-            .collect()
+            .collect();
+
+        // Always report corner regions as damaged since we can't track radius
+        // changes across frames (the element is recreated each frame). Without
+        // this, stale rounded corners persist when transitioning between
+        // tiled/floating states or when corner radius changes for any reason.
+        if self.radius != [0; 4] {
+            let elem_loc = self.geometry(scale).loc;
+            let corners = Self::rounded_corners(self.geometry, self.radius);
+            for corner in &corners {
+                let mut corner_rect = corner.to_physical_precise_up(scale);
+                corner_rect.loc -= elem_loc;
+                if let Some(intersection) = corner_rect.intersection(geo) {
+                    result.add(intersection);
+                }
+            }
+        }
+
+        result
     }
 
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
