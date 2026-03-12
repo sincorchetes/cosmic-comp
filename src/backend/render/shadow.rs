@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, cell::RefCell, collections::HashMap};
+use std::{borrow::Borrow, cell::{Cell, RefCell}, collections::HashMap};
 
 use cgmath::{Matrix3, Vector2};
 use smithay::{
@@ -29,6 +29,16 @@ pub struct ShadowParameters {
     dark_mode: bool,
 }
 type ShadowCache = RefCell<HashMap<CosmicMappedKey, (ShadowParameters, PixelShaderElement)>>;
+
+/// Frame counter for ShadowCache cleanup — retain() runs at most once per frame.
+struct ShadowCacheFrame(Cell<u64>);
+
+static SHADOW_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Bump the shadow cache frame counter. Call once per frame.
+pub fn bump_frame_counter() {
+    SHADOW_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 
 impl ShadowShader {
     pub fn get<R: AsGlowRenderer>(renderer: &R) -> GlesPixelProgram {
@@ -71,8 +81,14 @@ impl ShadowShader {
             .user_data();
 
         user_data.insert_if_missing(|| ShadowCache::new(HashMap::new()));
+        user_data.insert_if_missing(|| ShadowCacheFrame(Cell::new(0)));
+        let current_frame = SHADOW_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_cell = user_data.get::<ShadowCacheFrame>().unwrap();
         let mut cache = user_data.get::<ShadowCache>().unwrap().borrow_mut();
-        cache.retain(|k, _| k.alive());
+        if frame_cell.0.get() != current_frame {
+            frame_cell.0.set(current_frame);
+            cache.retain(|k, _| k.alive());
+        }
 
         if cache
             .get(&key)
