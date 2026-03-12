@@ -2,7 +2,7 @@
 
 use std::{
     borrow::Borrow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     ops::ControlFlow,
     sync::{Arc, Weak},
@@ -189,6 +189,12 @@ struct IndicatorSettings {
 }
 type IndicatorCache = RefCell<HashMap<Key, (IndicatorSettings, PixelShaderElement)>>;
 
+/// Frame counter for IndicatorCache cleanup — retain() runs at most once per frame.
+struct IndicatorCacheFrame(Cell<u64>);
+
+static INDICATOR_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static BACKDROP_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl IndicatorShader {
     pub fn get<R: AsGlowRenderer>(renderer: &R) -> GlesPixelProgram {
         Borrow::<GlesRenderer>::borrow(renderer.glow_renderer())
@@ -250,12 +256,18 @@ impl IndicatorShader {
             .user_data();
 
         user_data.insert_if_missing(|| IndicatorCache::new(HashMap::new()));
+        user_data.insert_if_missing(|| IndicatorCacheFrame(Cell::new(0)));
+        let current_frame = INDICATOR_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_cell = user_data.get::<IndicatorCacheFrame>().unwrap();
         let mut cache = user_data.get::<IndicatorCache>().unwrap().borrow_mut();
-        cache.retain(|k, _| match k {
-            Key::Static(w) => w.upgrade().is_some(),
-            Key::Group(w) => w.upgrade().is_some(),
-            Key::Window(_, w) => w.alive(),
-        });
+        if frame_cell.0.get() != current_frame {
+            frame_cell.0.set(current_frame);
+            cache.retain(|k, _| match k {
+                Key::Static(w) => w.upgrade().is_some(),
+                Key::Group(w) => w.upgrade().is_some(),
+                Key::Window(_, w) => w.alive(),
+            });
+        }
 
         let key = key.into();
         if cache
@@ -311,6 +323,9 @@ struct BackdropSettings {
 }
 type BackdropCache = RefCell<HashMap<Key, (BackdropSettings, PixelShaderElement)>>;
 
+/// Frame counter for BackdropCache cleanup — retain() runs at most once per frame.
+struct BackdropCacheFrame(Cell<u64>);
+
 impl BackdropShader {
     pub fn get<R: AsGlowRenderer>(renderer: &R) -> GlesPixelProgram {
         Borrow::<GlesRenderer>::borrow(renderer.glow_renderer())
@@ -341,12 +356,18 @@ impl BackdropShader {
             .user_data();
 
         user_data.insert_if_missing(|| BackdropCache::new(HashMap::new()));
+        user_data.insert_if_missing(|| BackdropCacheFrame(Cell::new(0)));
+        let current_frame = BACKDROP_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_cell = user_data.get::<BackdropCacheFrame>().unwrap();
         let mut cache = user_data.get::<BackdropCache>().unwrap().borrow_mut();
-        cache.retain(|k, _| match k {
-            Key::Static(w) => w.upgrade().is_some(),
-            Key::Group(a) => a.upgrade().is_some(),
-            Key::Window(_, w) => w.alive(),
-        });
+        if frame_cell.0.get() != current_frame {
+            frame_cell.0.set(current_frame);
+            cache.retain(|k, _| match k {
+                Key::Static(w) => w.upgrade().is_some(),
+                Key::Group(a) => a.upgrade().is_some(),
+                Key::Window(_, w) => w.alive(),
+            });
+        }
 
         let key = key.into();
         if cache
@@ -724,6 +745,11 @@ where
     CosmicMappedRenderElement<R>: RenderElement<R>,
     WorkspaceRenderElement<R>: RenderElement<R>,
 {
+    // Bump shader cache frame counters so retain() runs at most once per frame
+    INDICATOR_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    BACKDROP_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    shadow::bump_frame_counter();
+
     let mut elements = Vec::new();
 
     let shell_ref = shell.read();
@@ -819,6 +845,9 @@ where
         )
     };
 
+    // Compute timestamp once per frame for consistent animation progress across all elements
+    let frame_now = Instant::now();
+
     render_input_order::<()>(&shell, output, previous, current, element_filter, |stage| {
         match stage {
             Stage::ZoomUI => {
@@ -892,15 +921,15 @@ where
             Stage::StickyPopups(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - (Instant::now().duration_since(*started).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (1.0 - frame_now.duration_since(*started).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        ((Instant::now().duration_since(*ended).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (frame_now.duration_since(*ended).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
                     }
@@ -920,15 +949,15 @@ where
             Stage::Sticky(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - (Instant::now().duration_since(*started).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (1.0 - frame_now.duration_since(*started).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        ((Instant::now().duration_since(*ended).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (frame_now.duration_since(*ended).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
                     }
@@ -969,6 +998,7 @@ where
                         !move_active && is_active_space,
                         overview.clone(),
                         theme.cosmic(),
+                        frame_now,
                     ) {
                         Ok(elements) => {
                             elements
@@ -998,6 +1028,7 @@ where
                         resize_indicator.clone(),
                         active_hint,
                         theme.cosmic(),
+                        frame_now,
                     ) {
                         Ok(elements) => {
                             elements

@@ -633,7 +633,7 @@ impl State {
                         )
                         .as_global();
                     let serial = SERIAL_COUNTER.next_serial();
-                    let under = State::surface_under(position, &output, &self.common.shell.write())
+                    let under = State::surface_under(position, &output, &self.common.shell.read())
                         .map(|(target, pos)| (target, pos.as_logical()));
 
                     let ptr = seat.get_pointer().unwrap();

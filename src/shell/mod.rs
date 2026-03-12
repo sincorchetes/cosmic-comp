@@ -290,6 +290,10 @@ pub struct Shell {
     appearance_conf: AppearanceConfig,
     tiling_exceptions: TilingExceptions,
 
+    /// Cached result of `animations_going()`, updated once per frame in `update_animations()`.
+    /// Avoids repeated full traversal of all workspaces from render threads.
+    cached_animations_going: bool,
+
     #[cfg(feature = "debug")]
     pub debug_active: bool,
 }
@@ -329,12 +333,7 @@ impl WorkspaceDelta {
         WorkspaceDelta::GestureEnd {
             start: Instant::now(),
             forward,
-            spring: Spring {
-                from: delta,
-                to: 1.0,
-                initial_velocity: velocity,
-                params,
-            },
+            spring: Spring::new(delta, 1.0, velocity, params),
         }
     }
 
@@ -580,16 +579,12 @@ impl WorkspaceSet {
         if let Some((_, start)) = self.previously_active {
             match start {
                 WorkspaceDelta::Shortcut(st) => {
-                    if Instant::now().duration_since(st).as_millis() as f32
-                        >= ANIMATION_DURATION.as_millis() as f32
-                    {
+                    if Instant::now().duration_since(st) >= ANIMATION_DURATION {
                         self.previously_active = None;
                     }
                 }
                 WorkspaceDelta::GestureEnd { start, spring, .. } => {
-                    if Instant::now().duration_since(start).as_millis()
-                        > spring.duration().as_millis()
-                    {
+                    if Instant::now().duration_since(start) > spring.duration() {
                         self.previously_active = None;
                     }
                 }
@@ -1598,6 +1593,7 @@ impl Shell {
             appearance_conf: config.cosmic_conf.appearance_settings.clone(),
             zoom_state: None,
             tiling_exceptions,
+            cached_animations_going: false,
 
             #[cfg(feature = "debug")]
             debug_active: false,
@@ -2179,7 +2175,15 @@ impl Shell {
         for workspace in self.workspaces.spaces_mut() {
             clients.extend(workspace.update_animations());
         }
+        // Update cached flag to avoid expensive traversal in render threads
+        self.cached_animations_going = self.animations_going();
         clients
+    }
+
+    /// Fast path: returns the cached animation state without traversing all workspaces.
+    /// Updated once per frame by `update_animations()`.
+    pub fn animations_going_cached(&self) -> bool {
+        self.cached_animations_going
     }
 
     pub fn set_overview_mode(

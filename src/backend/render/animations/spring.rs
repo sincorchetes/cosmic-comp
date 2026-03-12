@@ -15,6 +15,9 @@ pub struct Spring {
     pub to: f64,
     pub initial_velocity: f64,
     pub params: SpringParams,
+    /// Cached duration computed at construction time to avoid
+    /// the expensive iterative Newton solver on every frame.
+    cached_duration: Duration,
 }
 
 impl SpringParams {
@@ -37,8 +40,26 @@ impl SpringParams {
 }
 
 impl Spring {
+    /// Create a new Spring and pre-compute its duration.
+    pub fn new(from: f64, to: f64, initial_velocity: f64, params: SpringParams) -> Self {
+        let mut spring = Self {
+            from,
+            to,
+            initial_velocity,
+            params,
+            cached_duration: Duration::ZERO,
+        };
+        spring.cached_duration = spring.compute_duration();
+        spring
+    }
+
     pub fn value_at(&self, t: Duration) -> f64 {
         self.oscillate(t.as_secs_f64())
+    }
+
+    /// Returns the cached duration (computed once at construction time).
+    pub fn duration(&self) -> Duration {
+        self.cached_duration
     }
 
     // Based on libadwaita (LGPL-2.1-or-later):
@@ -46,7 +67,7 @@ impl Spring {
     // which itself is based on (MIT):
     // https://github.com/robb/RBBAnimation/blob/master/RBBAnimation/RBBSpringAnimation.m
     /// Computes and returns the duration until the spring is at rest.
-    pub fn duration(&self) -> Duration {
+    fn compute_duration(&self) -> Duration {
         const DELTA: f64 = 0.001;
 
         let beta = self.params.damping / (2. * self.params.mass);
