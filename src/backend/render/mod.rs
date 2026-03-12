@@ -845,6 +845,9 @@ where
         )
     };
 
+    // Compute timestamp once per frame for consistent animation progress across all elements
+    let frame_now = Instant::now();
+
     render_input_order::<()>(&shell, output, previous, current, element_filter, |stage| {
         match stage {
             Stage::ZoomUI => {
@@ -918,14 +921,14 @@ where
             Stage::StickyPopups(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                        (1.0 - frame_now.duration_since(*started).as_secs_f32()
                             / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        (Instant::now().duration_since(*ended).as_secs_f32()
+                        (frame_now.duration_since(*ended).as_secs_f32()
                             / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
@@ -946,14 +949,14 @@ where
             Stage::Sticky(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                        (1.0 - frame_now.duration_since(*started).as_secs_f32()
                             / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        (Instant::now().duration_since(*ended).as_secs_f32()
+                        (frame_now.duration_since(*ended).as_secs_f32()
                             / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
@@ -995,6 +998,7 @@ where
                         !move_active && is_active_space,
                         overview.clone(),
                         theme.cosmic(),
+                        frame_now,
                     ) {
                         Ok(elements) => {
                             elements
@@ -1024,6 +1028,7 @@ where
                         resize_indicator.clone(),
                         active_hint,
                         theme.cosmic(),
+                        frame_now,
                     ) {
                         Ok(elements) => {
                             elements

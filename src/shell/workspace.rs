@@ -1530,6 +1530,7 @@ impl Workspace {
         resize_indicator: Option<(ResizeMode, ResizeIndicator)>,
         indicator_thickness: u8,
         theme: &CosmicTheme,
+        frame_now: Instant,
     ) -> Result<Vec<WorkspaceRenderElement<R>>, OutputNotMapped>
     where
         R: Renderer + ImportAll + ImportMem + AsGlowRenderer,
@@ -1557,7 +1558,7 @@ impl Workspace {
 
             let (target_geo, alpha) = match (fullscreen.start_at, fullscreen.ended_at) {
                 (Some(started), _) => {
-                    let duration = Instant::now().duration_since(started).as_secs_f64()
+                    let duration = frame_now.duration_since(started).as_secs_f64()
                         / FULLSCREEN_ANIMATION_DURATION.as_secs_f64();
                     (
                         ease(
@@ -1571,7 +1572,7 @@ impl Workspace {
                     )
                 }
                 (_, Some(ended)) => {
-                    let duration = Instant::now().duration_since(ended).as_secs_f64()
+                    let duration = frame_now.duration_since(ended).as_secs_f64()
                         / FULLSCREEN_ANIMATION_DURATION.as_secs_f64();
                     (
                         ease(
@@ -1637,14 +1638,14 @@ impl Workspace {
             // floating surfaces
             let alpha = match &overview.0 {
                 OverviewMode::Started(_, started) => {
-                    (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                    (1.0 - frame_now.duration_since(*started).as_secs_f32()
                         / ANIMATION_DURATION.as_secs_f32())
                         .max(0.0)
                         * 0.4
                         + 0.6
                 }
                 OverviewMode::Ended(_, ended) => {
-                    (Instant::now().duration_since(*ended).as_secs_f32()
+                    (frame_now.duration_since(*ended).as_secs_f32()
                         / ANIMATION_DURATION.as_secs_f32())
                         * 0.4
                         + 0.6
@@ -1675,12 +1676,12 @@ impl Workspace {
 
             let alpha = match &overview.0 {
                 OverviewMode::Started(_, start) => Some(
-                    (Instant::now().duration_since(*start).as_millis() as f64 / 100.0).min(1.0)
+                    (frame_now.duration_since(*start).as_secs_f64() / 0.1).min(1.0)
                         as f32,
                 ),
                 OverviewMode::Active(_) => Some(1.0),
                 OverviewMode::Ended(_, ended) => Some(
-                    1.0 - (Instant::now().duration_since(*ended).as_millis() as f64 / 100.0)
+                    1.0 - (frame_now.duration_since(*ended).as_secs_f64() / 0.1)
                         .min(1.0) as f32,
                 ),
                 OverviewMode::None => None,
@@ -1732,6 +1733,7 @@ impl Workspace {
         render_focus: bool,
         overview: (OverviewMode, Option<(SwapIndicator, Option<&Tree<Data>>)>),
         theme: &CosmicTheme,
+        frame_now: Instant,
     ) -> Result<Vec<WorkspaceRenderElement<R>>, OutputNotMapped>
     where
         R: Renderer + ImportAll + ImportMem + AsGlowRenderer,
@@ -1758,7 +1760,7 @@ impl Workspace {
 
             let (target_geo, alpha) = match (fullscreen.start_at, fullscreen.ended_at) {
                 (Some(started), _) => {
-                    let duration = Instant::now().duration_since(started).as_secs_f64()
+                    let duration = frame_now.duration_since(started).as_secs_f64()
                         / FULLSCREEN_ANIMATION_DURATION.as_secs_f64();
                     (
                         ease(
@@ -1772,7 +1774,7 @@ impl Workspace {
                     )
                 }
                 (_, Some(ended)) => {
-                    let duration = Instant::now().duration_since(ended).as_secs_f64()
+                    let duration = frame_now.duration_since(ended).as_secs_f64()
                         / FULLSCREEN_ANIMATION_DURATION.as_secs_f64();
                     (
                         ease(
@@ -1818,14 +1820,14 @@ impl Workspace {
             // floating surfaces
             let alpha = match &overview.0 {
                 OverviewMode::Started(_, started) => {
-                    (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                    (1.0 - frame_now.duration_since(*started).as_secs_f32()
                         / ANIMATION_DURATION.as_secs_f32())
                         .max(0.0)
                         * 0.4
                         + 0.6
                 }
                 OverviewMode::Ended(_, ended) => {
-                    (Instant::now().duration_since(*ended).as_secs_f32()
+                    (frame_now.duration_since(*ended).as_secs_f32()
                         / ANIMATION_DURATION.as_secs_f32())
                         * 0.4
                         + 0.6
