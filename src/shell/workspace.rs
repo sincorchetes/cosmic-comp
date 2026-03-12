@@ -721,20 +721,34 @@ impl Workspace {
     pub fn fullscreen_geometry(&self) -> Option<Rectangle<i32, Local>> {
         self.fullscreen.as_ref().map(|fullscreen| {
             let bbox = fullscreen.surface.bbox().as_local();
+            let full_geo = Rectangle::from_size(self.output.geometry().size.as_local());
 
-            let mut full_geo = Rectangle::from_size(self.output.geometry().size.as_local());
-            if bbox != full_geo {
-                if bbox.size.w < full_geo.size.w {
-                    full_geo.loc.x += (full_geo.size.w - bbox.size.w) / 2;
-                    full_geo.size.w = bbox.size.w;
-                }
-                if bbox.size.h < full_geo.size.h {
-                    full_geo.loc.y += (full_geo.size.h - bbox.size.h) / 2;
-                    full_geo.size.h = bbox.size.h;
-                }
+            // For Xwayland clients (e.g. Steam games), the surface bbox may report a
+            // resolution different from the output (e.g. the game's internal resolution
+            // or the primary monitor's resolution instead of the projector's). In that
+            // case centering based on the wrong bbox causes misalignment. Always use the
+            // full output geometry for the positioning target; the compositor's scaling
+            // pipeline will handle fitting the surface content to this region.
+            if fullscreen.surface.0.is_x11() {
+                return full_geo;
             }
 
-            full_geo
+            // For native Wayland clients, center the surface within the output if
+            // the committed buffer is smaller than the output (e.g. letter/pillarboxing).
+            if bbox != full_geo {
+                let mut geo = full_geo;
+                if bbox.size.w < geo.size.w {
+                    geo.loc.x += (geo.size.w - bbox.size.w) / 2;
+                    geo.size.w = bbox.size.w;
+                }
+                if bbox.size.h < geo.size.h {
+                    geo.loc.y += (geo.size.h - bbox.size.h) / 2;
+                    geo.size.h = bbox.size.h;
+                }
+                geo
+            } else {
+                full_geo
+            }
         })
     }
 
