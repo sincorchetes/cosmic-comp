@@ -290,6 +290,10 @@ pub struct Shell {
     appearance_conf: AppearanceConfig,
     tiling_exceptions: TilingExceptions,
 
+    /// Cached result of `animations_going()`, updated once per frame in `update_animations()`.
+    /// Avoids repeated full traversal of all workspaces from render threads.
+    cached_animations_going: bool,
+
     #[cfg(feature = "debug")]
     pub debug_active: bool,
 }
@@ -1598,6 +1602,7 @@ impl Shell {
             appearance_conf: config.cosmic_conf.appearance_settings.clone(),
             zoom_state: None,
             tiling_exceptions,
+            cached_animations_going: false,
 
             #[cfg(feature = "debug")]
             debug_active: false,
@@ -2179,7 +2184,15 @@ impl Shell {
         for workspace in self.workspaces.spaces_mut() {
             clients.extend(workspace.update_animations());
         }
+        // Update cached flag to avoid expensive traversal in render threads
+        self.cached_animations_going = self.animations_going();
         clients
+    }
+
+    /// Fast path: returns the cached animation state without traversing all workspaces.
+    /// Updated once per frame by `update_animations()`.
+    pub fn animations_going_cached(&self) -> bool {
+        self.cached_animations_going
     }
 
     pub fn set_overview_mode(
