@@ -333,12 +333,7 @@ impl WorkspaceDelta {
         WorkspaceDelta::GestureEnd {
             start: Instant::now(),
             forward,
-            spring: Spring {
-                from: delta,
-                to: 1.0,
-                initial_velocity: velocity,
-                params,
-            },
+            spring: Spring::new(delta, 1.0, velocity, params),
         }
     }
 
