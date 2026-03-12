@@ -892,15 +892,15 @@ where
             Stage::StickyPopups(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - (Instant::now().duration_since(*started).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        ((Instant::now().duration_since(*ended).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (Instant::now().duration_since(*ended).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
                     }
@@ -920,15 +920,15 @@ where
             Stage::Sticky(layout) => {
                 let alpha = match &overview.0 {
                     OverviewMode::Started(_, started) => {
-                        (1.0 - (Instant::now().duration_since(*started).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (1.0 - Instant::now().duration_since(*started).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             .max(0.0)
                             * 0.4
                             + 0.6
                     }
                     OverviewMode::Ended(_, ended) => {
-                        ((Instant::now().duration_since(*ended).as_millis()
-                            / ANIMATION_DURATION.as_millis()) as f32)
+                        (Instant::now().duration_since(*ended).as_secs_f32()
+                            / ANIMATION_DURATION.as_secs_f32())
                             * 0.4
                             + 0.6
                     }

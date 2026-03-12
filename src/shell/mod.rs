@@ -584,16 +584,12 @@ impl WorkspaceSet {
         if let Some((_, start)) = self.previously_active {
             match start {
                 WorkspaceDelta::Shortcut(st) => {
-                    if Instant::now().duration_since(st).as_millis() as f32
-                        >= ANIMATION_DURATION.as_millis() as f32
-                    {
+                    if Instant::now().duration_since(st) >= ANIMATION_DURATION {
                         self.previously_active = None;
                     }
                 }
                 WorkspaceDelta::GestureEnd { start, spring, .. } => {
-                    if Instant::now().duration_since(start).as_millis()
-                        > spring.duration().as_millis()
-                    {
+                    if Instant::now().duration_since(start) > spring.duration() {
                         self.previously_active = None;
                     }
                 }
