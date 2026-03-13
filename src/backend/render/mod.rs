@@ -192,8 +192,9 @@ type IndicatorCache = RefCell<HashMap<Key, (IndicatorSettings, PixelShaderElemen
 /// Frame counter for IndicatorCache cleanup — retain() runs at most once per frame.
 struct IndicatorCacheFrame(Cell<u64>);
 
-static INDICATOR_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static BACKDROP_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Unified frame counter for all shader caches. Bumped once per frame in workspace_elements().
+pub(crate) static SHADER_FRAME_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 impl IndicatorShader {
     pub fn get<R: AsGlowRenderer>(renderer: &R) -> GlesPixelProgram {
@@ -257,7 +258,7 @@ impl IndicatorShader {
 
         user_data.insert_if_missing(|| IndicatorCache::new(HashMap::new()));
         user_data.insert_if_missing(|| IndicatorCacheFrame(Cell::new(0)));
-        let current_frame = INDICATOR_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let current_frame = SHADER_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
         let frame_cell = user_data.get::<IndicatorCacheFrame>().unwrap();
         let mut cache = user_data.get::<IndicatorCache>().unwrap().borrow_mut();
         if frame_cell.0.get() != current_frame {
@@ -357,7 +358,7 @@ impl BackdropShader {
 
         user_data.insert_if_missing(|| BackdropCache::new(HashMap::new()));
         user_data.insert_if_missing(|| BackdropCacheFrame(Cell::new(0)));
-        let current_frame = BACKDROP_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let current_frame = SHADER_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
         let frame_cell = user_data.get::<BackdropCacheFrame>().unwrap();
         let mut cache = user_data.get::<BackdropCache>().unwrap().borrow_mut();
         if frame_cell.0.get() != current_frame {
@@ -745,10 +746,8 @@ where
     CosmicMappedRenderElement<R>: RenderElement<R>,
     WorkspaceRenderElement<R>: RenderElement<R>,
 {
-    // Bump shader cache frame counters so retain() runs at most once per frame
-    INDICATOR_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    BACKDROP_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    shadow::bump_frame_counter();
+    // Bump unified shader cache frame counter so retain() runs at most once per frame
+    SHADER_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let mut elements = Vec::new();
 

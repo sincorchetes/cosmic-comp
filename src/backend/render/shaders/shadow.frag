@@ -70,28 +70,19 @@ float roundedBoxShadow(vec2 lower, vec2 upper, vec2 point, float sigma, float co
     return value;
 }
 
+// Branchless SDF for a rounded box with per-corner radii.
+// Adapted for y-down screen space.
+float rounded_box_sdf(vec2 p, vec2 b, vec4 r) {
+    r.xy = (p.x > 0.0) ? r.zy : r.wx;
+    r.x  = (p.y > 0.0) ? r.x  : r.y;
+    vec2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
+}
+
 float rounding_alpha(vec2 coords, vec2 size, vec4 corner_radius) {
-    vec2 center;
-    float radius;
-
-    if (coords.x < corner_radius.x && coords.y < corner_radius.x) {
-        radius = corner_radius.x;
-        center = vec2(radius, radius);
-    } else if (size.x - corner_radius.y < coords.x && coords.y < corner_radius.y) {
-        radius = corner_radius.y;
-        center = vec2(size.x - radius, radius);
-    } else if (size.x - corner_radius.z < coords.x && size.y - corner_radius.z < coords.y) {
-        radius = corner_radius.z;
-        center = vec2(size.x - radius, size.y - radius);
-    } else if (coords.x < corner_radius.w && size.y - corner_radius.w < coords.y) {
-        radius = corner_radius.w;
-        center = vec2(radius, size.y - radius);
-    } else {
-        return 1.0;
-    }
-
-    float dist = distance(coords, center);
-    return 1.0 - smoothstep(radius - 0.5, radius + 0.5, dist);
+    vec2 center = size * 0.5;
+    float dist = rounded_box_sdf(coords - center, center, corner_radius);
+    return 1.0 - smoothstep(-0.5, 0.5, dist);
 }
 
 void main() {

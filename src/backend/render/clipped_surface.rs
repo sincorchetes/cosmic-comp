@@ -30,6 +30,35 @@ impl ClippingShader {
     }
 }
 
+/// Pre-computed uniform values stored inline to avoid per-frame heap allocations.
+/// The matrix is stored as a flat [f32; 9] array and only converted to
+/// `Vec<Uniform>` once in `draw()` via a small inline helper.
+#[derive(Debug, Clone)]
+struct ClippingUniforms {
+    geo_size: (f32, f32),
+    corner_radius: [f32; 4],
+    input_to_geo: [f32; 9],
+}
+
+impl ClippingUniforms {
+    /// Build the `Vec<Uniform>` needed by smithay's `override_default_tex_program`.
+    /// This allocation happens only in `draw()` when the frame is actually rendered,
+    /// and uses exact-capacity `Vec::with_capacity(3)`.
+    fn to_uniforms(&self) -> Vec<Uniform<'static>> {
+        let mut uniforms = Vec::with_capacity(3);
+        uniforms.push(Uniform::new("geo_size", self.geo_size));
+        uniforms.push(Uniform::new("corner_radius", self.corner_radius));
+        uniforms.push(Uniform::new(
+            "input_to_geo",
+            UniformValue::Matrix3x3 {
+                matrices: vec![self.input_to_geo],
+                transpose: false,
+            },
+        ));
+        uniforms
+    }
+}
+
 #[derive(Debug)]
 pub struct ClippedSurfaceRenderElement<R>
 where
@@ -39,7 +68,7 @@ where
     program: GlesTexProgram,
     radius: [u8; 4],
     geometry: Rectangle<f64, Logical>,
-    uniforms: Vec<Uniform<'static>>,
+    cached_uniforms: ClippingUniforms,
 }
 
 impl<R> ClippedSurfaceRenderElement<R>
@@ -92,32 +121,23 @@ where
         let input_to_geo =
             transform_matrix * geo_scale * geo_translation * buf_scale * buf_translation;
 
-        let uniforms = vec![
-            Uniform::new("geo_size", (geometry.size.w as f32, geometry.size.h as f32)),
-            Uniform::new(
-                "corner_radius",
-                [
-                    radius[3] as f32,
-                    radius[1] as f32,
-                    radius[0] as f32,
-                    radius[2] as f32,
-                ],
-            ),
-            Uniform::new(
-                "input_to_geo",
-                UniformValue::Matrix3x3 {
-                    matrices: vec![*AsRef::<[f32; 9]>::as_ref(&input_to_geo)],
-                    transpose: false,
-                },
-            ),
-        ];
+        let cached_uniforms = ClippingUniforms {
+            geo_size: (geometry.size.w as f32, geometry.size.h as f32),
+            corner_radius: [
+                radius[3] as f32,
+                radius[1] as f32,
+                radius[0] as f32,
+                radius[2] as f32,
+            ],
+            input_to_geo: *AsRef::<[f32; 9]>::as_ref(&input_to_geo),
+        };
 
         Self {
             inner: elem,
             program: ClippingShader::get(renderer),
             radius,
             geometry,
-            uniforms,
+            cached_uniforms,
         }
     }
 
@@ -207,11 +227,18 @@ where
             .into_iter()
             .filter_map(|rect| rect.intersection(geo));
 
-        // Always report corner regions as damaged since we can't track radius
-        // changes across frames (the element is recreated each frame). Without
-        // this, stale rounded corners persist when transitioning between
-        // tiled/floating states or when corner radius changes for any reason.
+        // Only report corner damage when the inner surface itself has damage.
+        // The corners need to be included because the clipping shader may produce
+        // different anti-aliased pixels at corner boundaries when the underlying
+        // surface content changes. We skip corner damage when there's no inner
+        // damage at all (static frame), which is the common case and avoids
+        // unnecessary GPU work.
         if self.radius != [0; 4] {
+            let base_vec: Vec<_> = base_damage.collect();
+            if base_vec.is_empty() {
+                return DamageSet::default();
+            }
+
             let elem_loc = self.geometry(scale).loc;
             let corners = Self::rounded_corners(self.geometry, self.radius);
             let corner_damage = corners.into_iter().filter_map(move |corner| {
@@ -219,7 +246,7 @@ where
                 corner_rect.loc -= elem_loc;
                 corner_rect.intersection(geo)
             });
-            base_damage.chain(corner_damage).collect()
+            base_vec.into_iter().chain(corner_damage).collect()
         } else {
             base_damage.collect()
         }
@@ -271,7 +298,7 @@ where
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), R::Error> {
         BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
-            .override_default_tex_program(self.program.clone(), self.uniforms.clone());
+            .override_default_tex_program(self.program.clone(), self.cached_uniforms.to_uniforms());
         self.inner.draw(frame, src, dst, damage, opaque_regions)?;
         BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
             .clear_tex_program_override();

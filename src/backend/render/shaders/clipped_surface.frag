@@ -1,4 +1,5 @@
 // Taken from niri and modified, licensed GPL-3.0
+// Optimized: replaced branching per-corner distance with SDF rounded_box
 
 #version 100
 
@@ -26,29 +27,16 @@ uniform vec2 geo_size;
 uniform vec4 corner_radius;
 uniform mat3 input_to_geo;
 
-float rounding_alpha(vec2 coords, vec2 size) {
-    vec2 center;
-    float radius;
-
-    if (coords.x < corner_radius.x && coords.y < corner_radius.x) {
-        radius = corner_radius.x;
-        center = vec2(radius, radius);
-    } else if (size.x - corner_radius.y < coords.x && coords.y < corner_radius.y) {
-        radius = corner_radius.y;
-        center = vec2(size.x - radius, radius);
-    } else if (size.x - corner_radius.z < coords.x && size.y - corner_radius.z < coords.y) {
-        radius = corner_radius.z;
-        center = vec2(size.x - radius, size.y - radius);
-    } else if (coords.x < corner_radius.w && size.y - corner_radius.w < coords.y) {
-        radius = corner_radius.w;
-        center = vec2(radius, size.y - radius);
-    } else {
-        return 1.0;
-    }
-
-    float dist = distance(coords, center);
-    float half_px = 0.5;
-    return 1.0 - smoothstep(radius - half_px, radius + half_px, dist);
+// Signed distance function for a rounded box with per-corner radii.
+// p: point relative to box center, b: box half-size, r: corner radii
+//   r.x = top-left, r.y = top-right, r.z = bottom-right, r.w = bottom-left
+// Adapted for y-down screen space (texture coordinates).
+// Returns negative inside, positive outside.
+float rounded_box(vec2 p, vec2 b, vec4 r) {
+    r.xy = (p.x > 0.0) ? r.zy : r.wx;
+    r.x  = (p.y > 0.0) ? r.x  : r.y;
+    vec2 q = abs(p) - b + r.x;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r.x;
 }
 
 void main() {
@@ -64,8 +52,12 @@ void main() {
         // Clip outside geometry.
         color = vec4(0.0);
     } else {
-        // Apply corner rounding inside geometry.
-        color = color * rounding_alpha(coords_geo.xy * geo_size, geo_size);
+        // Apply corner rounding via SDF — branchless per-corner selection.
+        vec2 pixel_coords = coords_geo.xy * geo_size;
+        vec2 center = geo_size * 0.5;
+        float dist = rounded_box(pixel_coords - center, center, corner_radius);
+        float clip_alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+        color = color * clip_alpha;
     }
 
     // Apply final alpha and tint.

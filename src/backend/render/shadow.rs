@@ -12,7 +12,7 @@ use smithay::{
 };
 
 use crate::{
-    backend::render::element::AsGlowRenderer,
+    backend::render::{SHADER_FRAME_COUNTER, element::AsGlowRenderer},
     shell::element::CosmicMappedKey,
     utils::prelude::{Local, RectLocalExt},
 };
@@ -32,13 +32,6 @@ type ShadowCache = RefCell<HashMap<CosmicMappedKey, (ShadowParameters, PixelShad
 
 /// Frame counter for ShadowCache cleanup — retain() runs at most once per frame.
 struct ShadowCacheFrame(Cell<u64>);
-
-static SHADOW_FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Bump the shadow cache frame counter. Call once per frame.
-pub fn bump_frame_counter() {
-    SHADOW_FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
 
 impl ShadowShader {
     pub fn get<R: AsGlowRenderer>(renderer: &R) -> GlesPixelProgram {
@@ -82,7 +75,7 @@ impl ShadowShader {
 
         user_data.insert_if_missing(|| ShadowCache::new(HashMap::new()));
         user_data.insert_if_missing(|| ShadowCacheFrame(Cell::new(0)));
-        let current_frame = SHADOW_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
+        let current_frame = SHADER_FRAME_COUNTER.load(std::sync::atomic::Ordering::Relaxed);
         let frame_cell = user_data.get::<ShadowCacheFrame>().unwrap();
         let mut cache = user_data.get::<ShadowCache>().unwrap().borrow_mut();
         if frame_cell.0.get() != current_frame {
