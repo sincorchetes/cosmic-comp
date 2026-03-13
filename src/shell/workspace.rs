@@ -1593,10 +1593,16 @@ impl Workspace {
                 .as_logical()
                 .to_physical_precise_round(output_scale);
 
-            // Only rescale geometry when animating
+            // Rescale when animating or when the surface buffer doesn't match the
+            // target geometry (e.g. X11/XWayland games that render at a different
+            // resolution than the output they are fullscreened on).
             let animation_rescale = |elem| {
-                if fullscreen.is_animating() {
-                    let fullscreen_geo = fullscreen.surface.0.geometry();
+                let fullscreen_geo = fullscreen.surface.0.geometry();
+                let needs_rescale = fullscreen.is_animating()
+                    || fullscreen_geo.size.w != target_geo.size.w
+                    || fullscreen_geo.size.h != target_geo.size.h;
+
+                if needs_rescale {
                     let scale = Scale {
                         x: target_geo.size.w as f64 / fullscreen_geo.size.w as f64,
                         y: target_geo.size.h as f64 / fullscreen_geo.size.h as f64,
