@@ -5640,10 +5640,17 @@ where
                     )
                 }
 
+                // For X11/Xwayland surfaces (e.g., Steam/Proton games), use
+                // Fit+CENTER to handle cases where the game renders at a
+                // different resolution than the tile size. This prevents
+                // black bars caused by buffer/tile size mismatches.
+                let is_x11 = mapped.active_window().0.is_x11();
                 let (behavior, align) = if is_overview {
                     (ConstrainScaleBehavior::Fit, ConstrainAlign::CENTER)
                 } else if animating {
                     (ConstrainScaleBehavior::Stretch, ConstrainAlign::TOP_LEFT)
+                } else if is_x11 {
+                    (ConstrainScaleBehavior::Fit, ConstrainAlign::CENTER)
                 } else {
                     (ConstrainScaleBehavior::CutOff, ConstrainAlign::TOP_LEFT)
                 };
