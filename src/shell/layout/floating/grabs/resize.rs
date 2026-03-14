@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::{
     backend::render::cursor::CursorState,
@@ -53,6 +54,10 @@ pub enum ResizeState {
     WaitingForCommit(ResizeData),
 }
 
+/// Minimum interval between configure events sent during interactive resize.
+/// This prevents flooding slow clients while ensuring smooth visual feedback.
+const RESIZE_THROTTLE_INTERVAL: Duration = Duration::from_millis(16);
+
 pub struct ResizeSurfaceGrab {
     start_data: GrabStartData,
     seat: Seat<State>,
@@ -63,6 +68,7 @@ pub struct ResizeSurfaceGrab {
     initial_window_location: Point<i32, Local>,
     initial_window_size: Size<i32, Logical>,
     last_window_size: Size<i32, Logical>,
+    last_configure_time: Instant,
     release: ReleaseMode,
 }
 
@@ -163,8 +169,15 @@ impl ResizeSurfaceGrab {
         self.window.set_resizing(true);
         self.window
             .set_geometry(Rectangle::new(win_loc, self.last_window_size.as_global()));
-        if self.window.latest_size_committed() {
+        // Send a configure if the client has committed the previous size, or if enough
+        // time has elapsed since the last configure. The time-based fallback prevents
+        // the resize from stalling when the client is slow to render, which causes the
+        // "jerky 90s" resize effect on heavy applications.
+        if self.window.latest_size_committed()
+            || self.last_configure_time.elapsed() >= RESIZE_THROTTLE_INTERVAL
+        {
             self.window.configure();
+            self.last_configure_time = Instant::now();
         }
 
         false
@@ -463,6 +476,7 @@ impl ResizeSurfaceGrab {
             initial_window_location,
             initial_window_size,
             last_window_size: initial_window_size,
+            last_configure_time: Instant::now(),
             release,
             edge_snap_threshold,
         }

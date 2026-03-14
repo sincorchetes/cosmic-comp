@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+use std::time::{Duration, Instant};
+
 use crate::{
     backend::render::cursor::CursorState,
     shell::{
@@ -31,6 +33,9 @@ use smithay::{
 };
 
 use super::super::{Data, TilingLayout};
+
+/// Minimum interval between configure events sent during interactive tiling resize.
+const RESIZE_THROTTLE_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResizeForkTarget {
@@ -184,6 +189,7 @@ pub struct ResizeForkGrab {
     last_loc: Point<f64, Global>,
     old_tree: Option<Tree<Data>>,
     accumulated_delta: f64,
+    last_configure_time: Instant,
     node: NodeId,
     output: WeakOutput,
     left_up_idx: usize,
@@ -206,6 +212,7 @@ impl ResizeForkGrab {
             last_loc: pointer_loc,
             old_tree: None,
             accumulated_delta: 0.0,
+            last_configure_time: Instant::now(),
             node,
             output,
             left_up_idx: idx,
@@ -329,6 +336,9 @@ impl ResizeForkGrab {
                     _ => unreachable!(),
                 }
 
+                // Send configures if all clients have committed, or if enough time
+                // has elapsed since the last configure. The time-based fallback
+                // prevents the resize from stalling when clients are slow to render.
                 let should_configure = force
                     || tree
                         .traverse_pre_order(&self.node)
@@ -336,10 +346,12 @@ impl ResizeForkGrab {
                         .all(|node| match node.data() {
                             Data::Mapped { mapped, .. } => mapped.latest_size_committed(),
                             _ => true,
-                        });
+                        })
+                    || self.last_configure_time.elapsed() >= RESIZE_THROTTLE_INTERVAL;
                 if should_configure {
                     let blocker = TilingLayout::update_positions(&output, &mut tree, gaps);
                     tiling_layer.queue.push_tree(tree, None, blocker);
+                    self.last_configure_time = Instant::now();
                 }
             } else {
                 return true;
